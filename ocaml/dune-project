@@ -1,0 +1,10 @@
+(lang dune 3.0)
+(name algorithm7)
+(generate_opam_files true)
+
+(package
+ (name algorithm7)
+ (synopsis "Head-driven tabular recognizer (Algorithm 7)")
+ (description "Implementation of Algorithm 7 from Satta & Stock (1994)")
+ (depends
+  (ocaml (>= 4.14))))

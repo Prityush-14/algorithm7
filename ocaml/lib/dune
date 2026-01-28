@@ -1,0 +1,4 @@
+(library
+ (name algorithm7)
+ (public_name algorithm7)
+ (modules grammar hcover recognizer))
