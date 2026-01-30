@@ -17,3 +17,6 @@ Date: 2026-01-30
 - Added CLI options in both Python and OCaml for showing used rules, derivations, and explain mode.
 - Exposed used-hcover and derivation APIs in the OCaml interface.
 - Tracked the paper PDF in-repo.
+
+## Documentation
+- Wrote README with algorithm overview, grammar format, CLI options, and test instructions.
