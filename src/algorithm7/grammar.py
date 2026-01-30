@@ -40,7 +40,7 @@ class Production:
 class Grammar:
     """A context-free grammar with head annotations.
 
-    Nonterminals are uppercase, terminals are lowercase.
+    Nonterminals are all symbols that appear on the left-hand side.
     The start symbol is 'S' by default.
     """
 
@@ -50,17 +50,18 @@ class Grammar:
         self.nonterminals: set[str] = set()
         self.terminals: set[str] = set()
 
+    def _recompute_symbols(self) -> None:
+        """Recompute terminal and nonterminal sets from productions."""
+        self.nonterminals = {p.lhs for p in self.productions}
+        rhs_symbols = {sym for p in self.productions for sym in p.rhs}
+        self.terminals = rhs_symbols - self.nonterminals
+
     def add_production(self, lhs: str, rhs: tuple[str, ...], head_pos: int) -> int:
         """Add a production and return its index."""
         prod = Production(lhs, rhs, head_pos)
         idx = len(self.productions)
         self.productions.append(prod)
-        self.nonterminals.add(lhs)
-        for symbol in rhs:
-            if symbol.isupper():
-                self.nonterminals.add(symbol)
-            else:
-                self.terminals.add(symbol)
+        self._recompute_symbols()
         return idx
 
     def is_terminal(self, symbol: str) -> bool:

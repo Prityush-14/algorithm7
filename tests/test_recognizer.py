@@ -33,6 +33,12 @@ class TestGrammar:
         assert idx == 0
         assert len(g.productions) == 1
         assert "S" in g.nonterminals
+        # RHS symbols are terminals unless they appear as LHS in some production
+        assert "NP" in g.terminals
+        assert "VP" in g.terminals
+
+        g.add_production("NP", ("n",), head_pos=1)
+        g.add_production("VP", ("v",), head_pos=1)
         assert "NP" in g.nonterminals
         assert "VP" in g.nonterminals
 
@@ -65,6 +71,12 @@ class TestGrammar:
         assert "S" in g.nonterminals
         assert "B" in g.nonterminals
 
+    def test_lowercase_nonterminal(self):
+        text = "s -> [a]"
+        g = Grammar.from_string(text, start="s")
+        assert "s" in g.nonterminals
+        assert "a" in g.terminals
+
 
 class TestHCover:
     @pytest.fixture
@@ -96,22 +108,22 @@ class TestHCover:
         # Production 0: S -> [a] b, head at position 1
         item = hc.initial_item(0)
         assert item.prod_idx == 0
-        assert item.s == 1
+        assert item.s == 0
         assert item.t == 1
 
     def test_left_expansions(self, paper_grammar):
         hc = HCover(paper_grammar)
         # Production 1: VP -> cl [v] NP, head at position 2
-        # Initial item: I_1^(2,2)
+        # Initial item: I_1^(1,2)
         initial = hc.initial_item(1)
-        assert initial.s == 2
+        assert initial.s == 1
         assert initial.t == 2
 
         # Should have left expansion to get 'cl'
         left_exps = hc.get_left_expansions(initial)
         assert len(left_exps) == 1
         assert left_exps[0].symbol == "cl"
-        assert left_exps[0].result == PartialItem(1, 1, 2)
+        assert left_exps[0].result == PartialItem(1, 0, 2)
 
     def test_right_expansions(self, paper_grammar):
         hc = HCover(paper_grammar)
@@ -122,16 +134,17 @@ class TestHCover:
         right_exps = hc.get_right_expansions(initial)
         assert len(right_exps) == 1
         assert right_exps[0].symbol == "NP"
-        assert right_exps[0].result == PartialItem(1, 2, 3)
+        assert right_exps[0].result == PartialItem(1, 1, 3)
 
     def test_completion(self, paper_grammar):
         hc = HCover(paper_grammar)
         # Production 2: NP -> [det] n (2 symbols, head at 1)
-        # Full span item: I_2^(1,2)
-        full_item = PartialItem(2, 1, 2)
-        comp = hc.get_completion(full_item)
-        assert comp is not None
-        assert comp.result == CompleteItem("NP")
+        # Completion via right expansion from I_2^(0,1) with symbol 'n'
+        head_item = PartialItem(2, 0, 1)
+        right_exps = hc.get_right_expansions(head_item)
+        assert len(right_exps) == 1
+        assert right_exps[0].symbol == "n"
+        assert right_exps[0].result == CompleteItem("NP")
 
 
 class TestRecognizer:

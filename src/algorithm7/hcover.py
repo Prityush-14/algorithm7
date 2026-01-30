@@ -4,7 +4,7 @@ Implements Definitions 4 and 5 from Satta & Stock (1994).
 
 An h-cover transforms a CFG G into G_H with:
 - H-items as nonterminals
-- Projection productions P_H^(1): I_D → X_H (complete item from head)
+- Projection productions P_H^(1): I_D or I_r^(τ-1,τ) → X_H
 - Expansion productions P_H^(2): partial item extensions
 """
 
@@ -19,11 +19,12 @@ class PartialItem:
     """A partial h-item I_r^(s,t).
 
     Represents partial recognition of production r,
-    having processed symbols from position s to t (1-indexed, inclusive).
+    having processed symbols from boundary s to t (0-indexed, inclusive),
+    where 0 ≤ s < τ_r ≤ t ≤ n_r and (s, t) ≠ (0, n_r).
     """
     prod_idx: int  # Production index r
-    s: int         # Left boundary (1-indexed)
-    t: int         # Right boundary (1-indexed)
+    s: int         # Left boundary (0-indexed)
+    t: int         # Right boundary (0-indexed)
 
     def __repr__(self) -> str:
         return f"I_{self.prod_idx}^({self.s},{self.t})"
@@ -52,7 +53,7 @@ class ProjectionProd:
     Form: I_D → X_H
     where D is a nonterminal and X is its head.
     """
-    lhs: CompleteItem  # I_D
+    lhs: HItem         # I_D (n_r=1) or I_r^(τ-1,τ) (n_r>1)
     head: str          # X_H (the head symbol)
     prod_idx: int      # Which production this projects from
 
@@ -67,7 +68,7 @@ class LeftExpandProd:
     Form: I_r^(s-1,t) → X_{s-1} I_r^(s,t)
     Extends a partial item leftward.
     """
-    result: PartialItem  # I_r^(s-1,t)
+    result: HItem        # I_r^(s-1,t) or I_D (completion)
     symbol: str          # X_{s-1}
     source: PartialItem  # I_r^(s,t)
     direction: str = "left"
@@ -83,28 +84,13 @@ class RightExpandProd:
     Form: I_r^(s,t+1) → I_r^(s,t) X_{t+1}
     Extends a partial item rightward.
     """
-    result: PartialItem  # I_r^(s,t+1)
+    result: HItem        # I_r^(s,t+1) or I_D (completion)
     source: PartialItem  # I_r^(s,t)
     symbol: str          # X_{t+1}
     direction: str = "right"
 
     def __repr__(self) -> str:
         return f"{self.result} → {self.source} {self.symbol}"
-
-
-@dataclass(frozen=True)
-class CompleteProd:
-    """A completion production from P_H^(2).
-
-    Form: I_A → I_r^(1,|α|)
-    Completes a nonterminal when a partial item spans the full RHS.
-    """
-    result: CompleteItem  # I_A
-    source: PartialItem   # I_r^(1,|α|)
-    prod_idx: int         # Production index
-
-    def __repr__(self) -> str:
-        return f"{self.result} → {self.source}"
 
 
 class HCover:
@@ -126,9 +112,6 @@ class HCover:
         self.left_expansions: dict[PartialItem, list[LeftExpandProd]] = {}
         self.right_expansions: dict[PartialItem, list[RightExpandProd]] = {}
 
-        # Completion productions indexed by source partial item
-        self.completions: dict[PartialItem, CompleteProd] = {}
-
         self._build()
 
     def _build(self):
@@ -140,50 +123,55 @@ class HCover:
             # P_H^(1): Projection production
             # I_{prod.lhs} → prod.head_H
             head = prod.head
-            proj = ProjectionProd(
-                lhs=CompleteItem(prod.lhs),
-                head=head,
-                prod_idx=r
-            )
+            if n == 1:
+                proj_lhs: HItem = CompleteItem(prod.lhs)
+            else:
+                proj_lhs = PartialItem(r, tau - 1, tau)
+            proj = ProjectionProd(lhs=proj_lhs, head=head, prod_idx=r)
             if head not in self.projections:
                 self.projections[head] = []
             self.projections[head].append(proj)
 
-            # P_H^(2): Expansion and completion productions
-            # Starting item: I_r^(tau, tau) - just the head
-            # We need to generate all possible partial items and their expansions
+            # P_H^(2): Expansions (only for length > 1)
+            if n == 1:
+                continue
 
-            # Generate all possible partial items for this production
-            for s in range(1, tau + 1):
+            # Left expansions: I_r^(s,t) -> X_H I_r^(s+1,t)
+            for s in range(0, tau - 1):
                 for t in range(tau, n + 1):
-                    source = PartialItem(r, s, t)
+                    result = PartialItem(r, s, t)
+                    if result.s == 0 and result.t == n:
+                        continue
+                    source = PartialItem(r, s + 1, t)
+                    symbol = prod.rhs[s]  # Z_{r,s+1}
+                    exp = LeftExpandProd(result, symbol, source)
+                    self.left_expansions.setdefault(source, []).append(exp)
 
-                    # Left expansion: if s > 1, we can extend left
-                    if s > 1:
-                        result = PartialItem(r, s - 1, t)
-                        symbol = prod.rhs[s - 2]  # X_{s-1} (0-indexed)
-                        exp = LeftExpandProd(result, symbol, source)
-                        if source not in self.left_expansions:
-                            self.left_expansions[source] = []
-                        self.left_expansions[source].append(exp)
+            # Right expansions: I_r^(s,t) -> I_r^(s,t-1) Y_H
+            for s in range(0, tau):
+                for t in range(tau + 1, n + 1):
+                    result = PartialItem(r, s, t)
+                    if result.s == 0 and result.t == n:
+                        continue
+                    source = PartialItem(r, s, t - 1)
+                    symbol = prod.rhs[t - 1]  # Z_{r,t}
+                    exp = RightExpandProd(result, source, symbol)
+                    self.right_expansions.setdefault(source, []).append(exp)
 
-                    # Right expansion: if t < n, we can extend right
-                    if t < n:
-                        result = PartialItem(r, s, t + 1)
-                        symbol = prod.rhs[t]  # X_{t+1} (0-indexed)
-                        exp = RightExpandProd(result, source, symbol)
-                        if source not in self.right_expansions:
-                            self.right_expansions[source] = []
-                        self.right_expansions[source].append(exp)
+            # Completions (P_H^(2)(b)) as expansions to complete I_D
+            # Left completion: I_D -> X_H I_r^(1,n)
+            if tau > 1:
+                source = PartialItem(r, 1, n)
+                symbol = prod.rhs[0]
+                comp = LeftExpandProd(CompleteItem(prod.lhs), symbol, source)
+                self.left_expansions.setdefault(source, []).append(comp)
 
-                    # Completion: if spans full RHS (1 to n)
-                    if s == 1 and t == n:
-                        comp = CompleteProd(
-                            result=CompleteItem(prod.lhs),
-                            source=source,
-                            prod_idx=r
-                        )
-                        self.completions[source] = comp
+            # Right completion: I_D -> I_r^(0,n-1) Y_H
+            if tau < n:
+                source = PartialItem(r, 0, n - 1)
+                symbol = prod.rhs[n - 1]
+                comp = RightExpandProd(CompleteItem(prod.lhs), source, symbol)
+                self.right_expansions.setdefault(source, []).append(comp)
 
     def get_projections(self, head: str) -> list[ProjectionProd]:
         """Get projection productions for a head symbol."""
@@ -197,31 +185,97 @@ class HCover:
         """Get right-expansion productions for a partial item."""
         return self.right_expansions.get(item, [])
 
-    def get_completion(self, item: PartialItem) -> CompleteProd | None:
-        """Get completion production for a partial item (if it spans full RHS)."""
-        return self.completions.get(item)
-
     def initial_item(self, prod_idx: int) -> PartialItem:
         """Get the initial partial item for a production (just the head)."""
         prod = self.grammar.productions[prod_idx]
         tau = prod.head_pos
-        return PartialItem(prod_idx, tau, tau)
+        if len(prod.rhs) == 1:
+            raise ValueError("No partial items for length-1 productions")
+        return PartialItem(prod_idx, tau - 1, tau)
 
     def __repr__(self) -> str:
-        lines = ["HCover:"]
-        lines.append("  Projections:")
+        return self.format(explain=False)
+
+    def format(self, explain: bool = False) -> str:
+        """Format the H-cover for display.
+
+        Args:
+            explain: If True, include detailed explanations and source productions
+        """
+        lines = []
+
+        if explain:
+            lines.append("H-Cover G_H (covering grammar for G)")
+            lines.append("=" * 50)
+            lines.append("")
+            lines.append("Note: Boundary indices (s,t) follow Satta & Stock 1994")
+            lines.append("  I_r^(s,t) with 0 ≤ s < τ ≤ t ≤ n and (s,t) ≠ (0,n)")
+            lines.append("  I_A = complete recognition of nonterminal A")
+            lines.append("")
+        else:
+            lines.append("HCover:")
+
+        # Projections
+        if explain:
+            lines.append("Projections P_H^(1): I_D -> X_H")
+            lines.append("  (To recognize D, first find its head X)")
+            lines.append("-" * 40)
+        else:
+            lines.append("  Projections:")
+
         for head, projs in self.projections.items():
             for p in projs:
-                lines.append(f"    {p}")
-        lines.append("  Left Expansions:")
+                if explain:
+                    prod = self.grammar.productions[p.prod_idx]
+                    lines.append(f"  {p.lhs} -> {p.head}_H")
+                    lines.append(f"    Source: [{p.prod_idx}] {prod}")
+                    lines.append(f"    Meaning: To recognize {p.lhs}, first find head '{p.head}'")
+                    lines.append("")
+                else:
+                    lines.append(f"    {p}")
+
+        # Left Expansions
+        if explain:
+            lines.append("Left Expansions P_H^(2): I_r^(s-1,t) -> X_{s-1} I_r^(s,t)")
+            lines.append("  (Extend partial item leftward by consuming X)")
+            lines.append("-" * 40)
+        else:
+            lines.append("  Left Expansions:")
+
         for source, exps in self.left_expansions.items():
             for e in exps:
-                lines.append(f"    {e}")
-        lines.append("  Right Expansions:")
+                if explain:
+                    prod = self.grammar.productions[e.source.prod_idx]
+                    lines.append(f"  {e.result} -> {e.symbol} {e.source}")
+                    lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
+                    if isinstance(e.result, PartialItem):
+                        lines.append(f"    Meaning: Extend left by consuming '{e.symbol}' at boundary {e.result.s}")
+                    else:
+                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{e.symbol}' on the left")
+                    lines.append("")
+                else:
+                    lines.append(f"    {e}")
+
+        # Right Expansions
+        if explain:
+            lines.append("Right Expansions P_H^(2): I_r^(s,t+1) -> I_r^(s,t) X_{t+1}")
+            lines.append("  (Extend partial item rightward by consuming X)")
+            lines.append("-" * 40)
+        else:
+            lines.append("  Right Expansions:")
+
         for source, exps in self.right_expansions.items():
             for e in exps:
-                lines.append(f"    {e}")
-        lines.append("  Completions:")
-        for source, comp in self.completions.items():
-            lines.append(f"    {comp}")
+                if explain:
+                    prod = self.grammar.productions[e.source.prod_idx]
+                    lines.append(f"  {e.result} -> {e.source} {e.symbol}")
+                    lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
+                    if isinstance(e.result, PartialItem):
+                        lines.append(f"    Meaning: Extend right by consuming '{e.symbol}' at boundary {e.result.t}")
+                    else:
+                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{e.symbol}' on the right")
+                    lines.append("")
+                else:
+                    lines.append(f"    {e}")
+
         return "\n".join(lines)

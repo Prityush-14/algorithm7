@@ -65,6 +65,21 @@ If no head is marked, the first symbol is used.
         help="Print the h-cover and exit"
     )
     parser.add_argument(
+        "--explain", "-x",
+        action="store_true",
+        help="Show verbose explanations (with --show-hcover or --show-used-rules)"
+    )
+    parser.add_argument(
+        "--show-used-rules",
+        action="store_true",
+        help="After recognition, show only the H-cover rules that were actually used"
+    )
+    parser.add_argument(
+        "--show-derivation",
+        action="store_true",
+        help="After recognition, show the derivation tree"
+    )
+    parser.add_argument(
         "--debug", "-d",
         action="store_true",
         help="Enable debug output"
@@ -92,7 +107,7 @@ If no head is marked, the first symbol is used.
 
     # Show h-cover if requested
     if args.show_hcover:
-        print(recognizer.hcover)
+        print(recognizer.hcover.format(explain=args.explain))
         sys.exit(0)
 
     # Check for input
@@ -110,6 +125,19 @@ If no head is marked, the first symbol is used.
         print(f"ACCEPTED: '{args.input}' is in L(G)")
     else:
         print(f"REJECTED: '{args.input}' is not in L(G)")
+
+    # Show used rules if requested
+    if args.show_used_rules:
+        print()
+        used_hcover = recognizer.get_used_hcover()
+        print(used_hcover.format(explain=args.explain))
+
+    # Show derivation if requested
+    if args.show_derivation:
+        print()
+        print("Derivation Tree:")
+        print("-" * 40)
+        print(recognizer.format_derivation())
 
     sys.exit(0 if result else 1)
 

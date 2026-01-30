@@ -26,10 +26,17 @@ let create ?(start = "S") () = {
   terminals = StringSet.empty;
 }
 
-let is_uppercase_start s =
-  String.length s > 0 &&
-  let c = s.[0] in
-  c >= 'A' && c <= 'Z'
+let recompute_symbols t =
+  let nonterms =
+    List.fold_left (fun acc p -> StringSet.add p.lhs acc) StringSet.empty t.productions
+  in
+  let rhs_symbols =
+    List.fold_left (fun acc p ->
+      Array.fold_left (fun acc sym -> StringSet.add sym acc) acc p.rhs
+    ) StringSet.empty t.productions
+  in
+  t.nonterminals <- nonterms;
+  t.terminals <- StringSet.diff rhs_symbols nonterms
 
 let add_production t ~lhs ~rhs ~head_pos =
   let rhs_arr = Array.of_list rhs in
@@ -41,13 +48,7 @@ let add_production t ~lhs ~rhs ~head_pos =
   let prod = { lhs; rhs = rhs_arr; head_pos } in
   let idx = List.length t.productions in
   t.productions <- t.productions @ [prod];
-  t.nonterminals <- StringSet.add lhs t.nonterminals;
-  Array.iter (fun sym ->
-    if is_uppercase_start sym then
-      t.nonterminals <- StringSet.add sym t.nonterminals
-    else
-      t.terminals <- StringSet.add sym t.terminals
-  ) rhs_arr;
+  recompute_symbols t;
   idx
 
 let start t = t.start

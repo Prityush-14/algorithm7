@@ -24,12 +24,17 @@ Options:
   -e, --example         Use the example grammar from the paper
   --show-grammar        Print the grammar and exit
   --show-hcover         Print the h-cover and exit
+  --show-used-rules     After recognition, show only used H-cover rules
+  --show-derivation     After recognition, show the derivation tree
+  -x, --explain         Show verbose explanations (with --show-hcover or --show-used-rules)
   -d, --debug           Enable debug output
   -h, --help            Show this help
 
 Example:
   algorithm7 --example "det n cl v det n"
   algorithm7 --grammar grammar.txt "det n cl v det n"
+  algorithm7 --example --show-hcover --explain
+  algorithm7 --example --show-used-rules "det n cl v det n"
 |};
   exit 1
 
@@ -38,6 +43,9 @@ type options = {
   mutable use_example : bool;
   mutable show_grammar : bool;
   mutable show_hcover : bool;
+  mutable show_used_rules : bool;
+  mutable show_derivation : bool;
+  mutable explain : bool;
   mutable debug : bool;
   mutable input : string option;
 }
@@ -48,6 +56,9 @@ let parse_args () =
     use_example = false;
     show_grammar = false;
     show_hcover = false;
+    show_used_rules = false;
+    show_derivation = false;
+    explain = false;
     debug = false;
     input = None;
   } in
@@ -66,6 +77,15 @@ let parse_args () =
       parse rest
     | "--show-hcover" :: rest ->
       opts.show_hcover <- true;
+      parse rest
+    | "--show-used-rules" :: rest ->
+      opts.show_used_rules <- true;
+      parse rest
+    | "--show-derivation" :: rest ->
+      opts.show_derivation <- true;
+      parse rest
+    | ("-x" | "--explain") :: rest ->
+      opts.explain <- true;
       parse rest
     | ("-d" | "--debug") :: rest ->
       opts.debug <- true;
@@ -110,7 +130,11 @@ let () =
 
   (* Show h-cover if requested *)
   if opts.show_hcover then begin
-    Format.printf "%a@." Hcover.pp (Recognizer.hcover recognizer);
+    let hcover = Recognizer.hcover recognizer in
+    if opts.explain then
+      Format.printf "%a@." Hcover.pp_explain hcover
+    else
+      Format.printf "%a@." Hcover.pp hcover;
     exit 0
   end;
 
@@ -127,10 +151,30 @@ let () =
     (* Recognize *)
     let result = Recognizer.recognize recognizer tokens in
 
-    if result then begin
-      Printf.printf "ACCEPTED: '%s' is in L(G)\n" input_str;
-      exit 0
-    end else begin
+    if result then
+      Printf.printf "ACCEPTED: '%s' is in L(G)\n" input_str
+    else
       Printf.printf "REJECTED: '%s' is not in L(G)\n" input_str;
-      exit 1
-    end
+
+    (* Show used rules if requested *)
+    if opts.show_used_rules then begin
+      Printf.printf "\n";
+      let used = Recognizer.get_used_hcover recognizer in
+      if opts.explain then
+        Format.printf "%a@." (Recognizer.pp_used_hcover_explain grammar) used
+      else
+        Format.printf "%a@." Recognizer.pp_used_hcover used
+    end;
+
+    (* Show derivation if requested *)
+    if opts.show_derivation then begin
+      Printf.printf "\nDerivation Tree:\n";
+      Printf.printf "----------------------------------------\n";
+      match Recognizer.get_derivation recognizer with
+      | Some deriv ->
+        Format.printf "%a@." (Recognizer.pp_derivation tokens) deriv
+      | None ->
+        Printf.printf "No derivation found (sentence not accepted)\n"
+    end;
+
+    exit (if result then 0 else 1)

@@ -57,7 +57,12 @@ let test_grammar () =
     check "add_production returns 0" (idx = 0);
     check "num_productions is 1" (Grammar.num_productions g = 1);
     check "S is nonterminal" (Grammar.is_nonterminal g "S");
+    check "NP is terminal" (Grammar.is_terminal g "NP");
+
+    ignore (Grammar.add_production g ~lhs:"NP" ~rhs:["n"] ~head_pos:1);
+    ignore (Grammar.add_production g ~lhs:"VP" ~rhs:["v"] ~head_pos:1);
     check "NP is nonterminal" (Grammar.is_nonterminal g "NP");
+    check "VP is nonterminal" (Grammar.is_nonterminal g "VP");
 
     (* From string *)
     let text = {|
@@ -86,7 +91,12 @@ let test_grammar () =
     check "a is terminal" (Grammar.is_terminal g "a");
     check "c is terminal" (Grammar.is_terminal g "c");
     check "S is nonterminal" (Grammar.is_nonterminal g "S");
-    check "B is nonterminal" (Grammar.is_nonterminal g "B")
+    check "B is nonterminal" (Grammar.is_nonterminal g "B");
+
+    (* Lowercase nonterminal via LHS *)
+    let g = Grammar.from_string ~start:"s" "s -> [a]" in
+    check "s is nonterminal" (Grammar.is_nonterminal g "s");
+    check "a is terminal" (Grammar.is_terminal g "a")
   )
 
 (* ============== HCover Tests ============== *)
@@ -111,35 +121,45 @@ let test_hcover () =
     (* Initial item *)
     let item = Hcover.initial_item hc 0 in
     check "initial item prod_idx" (item.prod_idx = 0);
-    check "initial item s" (item.s = 1);
+    check "initial item s" (item.s = 0);
     check "initial item t" (item.t = 1);
 
     (* Left expansions *)
     let g = paper_grammar () in
     let hc = Hcover.create g in
     let initial = Hcover.initial_item hc 1 in  (* VP -> cl [v] NP *)
-    check "VP initial s=2" (initial.s = 2);
+    check "VP initial s=1" (initial.s = 1);
     check "VP initial t=2" (initial.t = 2);
     let left_exps = Hcover.get_left_expansions hc initial in
     check "1 left expansion" (List.length left_exps = 1);
     let exp = List.hd left_exps in
     check "left symbol is cl" (exp.left_symbol = "cl");
-    check "left result s=1" (exp.left_result.s = 1);
-    check "left result t=2" (exp.left_result.t = 2);
+    (match exp.left_result with
+     | Hcover.Partial p ->
+       check "left result s=0" (p.s = 0);
+       check "left result t=2" (p.t = 2)
+     | Hcover.Complete _ -> check "left result is partial" false);
 
     (* Right expansions *)
     let right_exps = Hcover.get_right_expansions hc initial in
     check "1 right expansion" (List.length right_exps = 1);
     let exp = List.hd right_exps in
     check "right symbol is NP" (exp.right_symbol = "NP");
-    check "right result s=2" (exp.right_result.s = 2);
-    check "right result t=3" (exp.right_result.t = 3);
+    (match exp.right_result with
+     | Hcover.Partial p ->
+       check "right result s=1" (p.s = 1);
+       check "right result t=3" (p.t = 3)
+     | Hcover.Complete _ -> check "right result is partial" false);
 
     (* Completion *)
-    let full_item = Hcover.{ prod_idx = 2; s = 1; t = 2 } in
-    (match Hcover.get_completion hc full_item with
-     | None -> check "completion exists" false
-     | Some comp -> check "completion result is NP" (comp.comp_result.symbol = "NP"))
+    let head_item = Hcover.{ prod_idx = 2; s = 0; t = 1 } in
+    let right_exps = Hcover.get_right_expansions hc head_item in
+    check "1 right completion expansion" (List.length right_exps = 1);
+    let exp = List.hd right_exps in
+    check "right completion symbol is n" (exp.right_symbol = "n");
+    (match exp.right_result with
+     | Hcover.Complete c -> check "completion result is NP" (c.symbol = "NP")
+     | Hcover.Partial _ -> check "completion result is complete" false)
   )
 
 (* ============== Recognizer Tests ============== *)

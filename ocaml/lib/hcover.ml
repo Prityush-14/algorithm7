@@ -15,27 +15,21 @@ type hitem =
   | Complete of complete_item
 
 type projection_prod = {
-  lhs : complete_item;
+  lhs : hitem;
   head : Grammar.symbol;
   proj_prod_idx : int;
 }
 
 type left_expand_prod = {
-  left_result : partial_item;
+  left_result : hitem;
   left_symbol : Grammar.symbol;
   left_source : partial_item;
 }
 
 type right_expand_prod = {
-  right_result : partial_item;
+  right_result : hitem;
   right_source : partial_item;
   right_symbol : Grammar.symbol;
-}
-
-type complete_prod = {
-  comp_result : complete_item;
-  comp_source : partial_item;
-  comp_prod_idx : int;
 }
 
 (* Comparison functions *)
@@ -72,7 +66,6 @@ type t = {
   projections : (Grammar.symbol, projection_prod list) Hashtbl.t;
   left_expansions : left_expand_prod list PartialTbl.t;
   right_expansions : right_expand_prod list PartialTbl.t;
-  completions : complete_prod option PartialTbl.t;
 }
 
 let grammar t = t.grammar
@@ -81,7 +74,6 @@ let build grammar =
   let projections = Hashtbl.create 16 in
   let left_expansions = PartialTbl.create 64 in
   let right_expansions = PartialTbl.create 64 in
-  let completions = PartialTbl.create 32 in
 
   let prods = Grammar.productions grammar in
   Array.iteri (fun r prod ->
@@ -90,51 +82,66 @@ let build grammar =
     let head = Grammar.head prod in
 
     (* Projection production: I_{prod.lhs} -> head_H *)
-    let proj = {
-      lhs = { symbol = prod.lhs };
-      head;
-      proj_prod_idx = r;
-    } in
+    let proj_lhs =
+      if n = 1 then
+        Complete { symbol = prod.lhs }
+      else
+        Partial { prod_idx = r; s = tau - 1; t = tau }
+    in
+    let proj = { lhs = proj_lhs; head; proj_prod_idx = r } in
     let existing = Hashtbl.find_opt projections head |> Option.value ~default:[] in
     Hashtbl.replace projections head (proj :: existing);
 
-    (* Generate all possible partial items and their expansions *)
-    for s = 1 to tau do
-      for t = tau to n do
-        let source = { prod_idx = r; s; t } in
+    (* Expansions for length > 1 *)
+    if n > 1 then begin
+      (* Left expansions: I_r^(s,t) -> X_H I_r^(s+1,t) *)
+      for s = 0 to tau - 2 do
+        for t = tau to n do
+          let result = { prod_idx = r; s; t } in
+          if not (result.s = 0 && result.t = n) then begin
+            let source = { prod_idx = r; s = s + 1; t } in
+            let symbol = prod.Grammar.rhs.(s) in
+            let exp = { left_result = Partial result; left_symbol = symbol; left_source = source } in
+            let existing = PartialTbl.find_opt left_expansions source |> Option.value ~default:[] in
+            PartialTbl.replace left_expansions source (exp :: existing)
+          end
+        done
+      done;
 
-        (* Left expansion: if s > 1, we can extend left *)
-        if s > 1 then begin
-          let result = { prod_idx = r; s = s - 1; t } in
-          let symbol = prod.Grammar.rhs.(s - 2) in  (* X_{s-1}, 0-indexed *)
-          let exp = { left_result = result; left_symbol = symbol; left_source = source } in
-          let existing = PartialTbl.find_opt left_expansions source |> Option.value ~default:[] in
-          PartialTbl.replace left_expansions source (exp :: existing)
-        end;
+      (* Right expansions: I_r^(s,t) -> I_r^(s,t-1) Y_H *)
+      for s = 0 to tau - 1 do
+        for t = tau + 1 to n do
+          let result = { prod_idx = r; s; t } in
+          if not (result.s = 0 && result.t = n) then begin
+            let source = { prod_idx = r; s; t = t - 1 } in
+            let symbol = prod.Grammar.rhs.(t - 1) in
+            let exp = { right_result = Partial result; right_source = source; right_symbol = symbol } in
+            let existing = PartialTbl.find_opt right_expansions source |> Option.value ~default:[] in
+            PartialTbl.replace right_expansions source (exp :: existing)
+          end
+        done
+      done;
 
-        (* Right expansion: if t < n, we can extend right *)
-        if t < n then begin
-          let result = { prod_idx = r; s; t = t + 1 } in
-          let symbol = prod.Grammar.rhs.(t) in  (* X_{t+1}, 0-indexed *)
-          let exp = { right_result = result; right_source = source; right_symbol = symbol } in
-          let existing = PartialTbl.find_opt right_expansions source |> Option.value ~default:[] in
-          PartialTbl.replace right_expansions source (exp :: existing)
-        end;
+      (* Completions as expansions *)
+      if tau > 1 then begin
+        let source = { prod_idx = r; s = 1; t = n } in
+        let symbol = prod.Grammar.rhs.(0) in
+        let exp = { left_result = Complete { symbol = prod.lhs }; left_symbol = symbol; left_source = source } in
+        let existing = PartialTbl.find_opt left_expansions source |> Option.value ~default:[] in
+        PartialTbl.replace left_expansions source (exp :: existing)
+      end;
 
-        (* Completion: if spans full RHS (1 to n) *)
-        if s = 1 && t = n then begin
-          let comp = {
-            comp_result = { symbol = prod.lhs };
-            comp_source = source;
-            comp_prod_idx = r;
-          } in
-          PartialTbl.replace completions source (Some comp)
-        end
-      done
-    done
+      if tau < n then begin
+        let source = { prod_idx = r; s = 0; t = n - 1 } in
+        let symbol = prod.Grammar.rhs.(n - 1) in
+        let exp = { right_result = Complete { symbol = prod.lhs }; right_source = source; right_symbol = symbol } in
+        let existing = PartialTbl.find_opt right_expansions source |> Option.value ~default:[] in
+        PartialTbl.replace right_expansions source (exp :: existing)
+      end
+    end
   ) prods;
 
-  { grammar; projections; left_expansions; right_expansions; completions }
+  { grammar; projections; left_expansions; right_expansions }
 
 let create = build
 
@@ -147,13 +154,12 @@ let get_left_expansions t item =
 let get_right_expansions t item =
   PartialTbl.find_opt t.right_expansions item |> Option.value ~default:[]
 
-let get_completion t item =
-  PartialTbl.find_opt t.completions item |> Option.join
-
 let initial_item t prod_idx =
   let prod = Grammar.get_production t.grammar prod_idx in
   let tau = prod.head_pos in
-  { prod_idx; s = tau; t = tau }
+  if Array.length prod.rhs = 1 then
+    invalid_arg "No partial items for length-1 productions";
+  { prod_idx; s = tau - 1; t = tau }
 
 (* Pretty printers *)
 let pp_partial fmt p =
@@ -172,28 +178,91 @@ let pp fmt t =
   Hashtbl.iter (fun _head projs ->
     List.iter (fun p ->
       Format.fprintf fmt "    %a -> %s_H (prod %d)@."
-        pp_complete p.lhs p.head p.proj_prod_idx
+        pp_hitem p.lhs p.head p.proj_prod_idx
     ) projs
   ) t.projections;
   Format.fprintf fmt "  Left Expansions:@.";
   PartialTbl.iter (fun _source exps ->
     List.iter (fun e ->
       Format.fprintf fmt "    %a -> %s %a@."
-        pp_partial e.left_result e.left_symbol pp_partial e.left_source
+        pp_hitem e.left_result e.left_symbol pp_partial e.left_source
     ) exps
   ) t.left_expansions;
   Format.fprintf fmt "  Right Expansions:@.";
   PartialTbl.iter (fun _source exps ->
     List.iter (fun e ->
       Format.fprintf fmt "    %a -> %a %s@."
-        pp_partial e.right_result pp_partial e.right_source e.right_symbol
+        pp_hitem e.right_result pp_partial e.right_source e.right_symbol
     ) exps
-  ) t.right_expansions;
-  Format.fprintf fmt "  Completions:@.";
-  PartialTbl.iter (fun _source comp_opt ->
-    match comp_opt with
-    | Some comp ->
-      Format.fprintf fmt "    %a -> %a@."
-        pp_complete comp.comp_result pp_partial comp.comp_source
-    | None -> ()
-  ) t.completions
+  ) t.right_expansions
+
+let pp_explain fmt t =
+  let prods = Grammar.productions t.grammar in
+  Format.fprintf fmt "H-Cover G_H (covering grammar for G)@.";
+  Format.fprintf fmt "==================================================@.";
+  Format.fprintf fmt "@.";
+  Format.fprintf fmt "Note: Boundary indices (s,t) follow Satta & Stock 1994@.";
+  Format.fprintf fmt "  I_r^(s,t) with 0 ≤ s < τ ≤ t ≤ n and (s,t) ≠ (0,n)@.";
+  Format.fprintf fmt "  I_A = complete recognition of nonterminal A@.";
+  Format.fprintf fmt "@.";
+
+  (* Projections *)
+  Format.fprintf fmt "Projections P_H^(1): I_D -> X_H@.";
+  Format.fprintf fmt "  (To recognize D, first find its head X)@.";
+  Format.fprintf fmt "----------------------------------------@.";
+  Hashtbl.iter (fun _head projs ->
+    List.iter (fun p ->
+      let prod = prods.(p.proj_prod_idx) in
+      Format.fprintf fmt "  %a -> %s_H@."
+        pp_hitem p.lhs p.head;
+      Format.fprintf fmt "    Source: [%d] %a@."
+        p.proj_prod_idx Grammar.pp_production prod;
+      Format.fprintf fmt "    Meaning: To recognize %a, first find head '%s'@."
+        pp_hitem p.lhs p.head;
+      Format.fprintf fmt "@."
+    ) projs
+  ) t.projections;
+
+  (* Left Expansions *)
+  Format.fprintf fmt "Left Expansions P_H^(2): I_r^(s-1,t) -> X_{s-1} I_r^(s,t)@.";
+  Format.fprintf fmt "  (Extend partial item leftward by consuming X)@.";
+  Format.fprintf fmt "----------------------------------------@.";
+  PartialTbl.iter (fun _source exps ->
+    List.iter (fun e ->
+      let prod = prods.(e.left_source.prod_idx) in
+      Format.fprintf fmt "  %a -> %s %a@."
+        pp_hitem e.left_result e.left_symbol pp_partial e.left_source;
+      Format.fprintf fmt "    Source: [%d] %a@."
+        e.left_source.prod_idx Grammar.pp_production prod;
+      (match e.left_result with
+       | Partial p ->
+         Format.fprintf fmt "    Meaning: Extend left by consuming '%s' at boundary %d@."
+           e.left_symbol p.s
+       | Complete c ->
+         Format.fprintf fmt "    Meaning: Complete %s by consuming '%s' on the left@."
+           c.symbol e.left_symbol);
+      Format.fprintf fmt "@."
+    ) exps
+  ) t.left_expansions;
+
+  (* Right Expansions *)
+  Format.fprintf fmt "Right Expansions P_H^(2): I_r^(s,t+1) -> I_r^(s,t) X_{t+1}@.";
+  Format.fprintf fmt "  (Extend partial item rightward by consuming X)@.";
+  Format.fprintf fmt "----------------------------------------@.";
+  PartialTbl.iter (fun _source exps ->
+    List.iter (fun e ->
+      let prod = prods.(e.right_source.prod_idx) in
+      Format.fprintf fmt "  %a -> %a %s@."
+        pp_hitem e.right_result pp_partial e.right_source e.right_symbol;
+      Format.fprintf fmt "    Source: [%d] %a@."
+        e.right_source.prod_idx Grammar.pp_production prod;
+      (match e.right_result with
+       | Partial p ->
+         Format.fprintf fmt "    Meaning: Extend right by consuming '%s' at boundary %d@."
+           e.right_symbol p.t
+       | Complete c ->
+         Format.fprintf fmt "    Meaning: Complete %s by consuming '%s' on the right@."
+           c.symbol e.right_symbol);
+      Format.fprintf fmt "@."
+    ) exps
+  ) t.right_expansions

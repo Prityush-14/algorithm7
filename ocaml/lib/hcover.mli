@@ -4,19 +4,19 @@
 
     An h-cover transforms a CFG G into G_H with:
     - H-items as nonterminals
-    - Projection productions P_H^(1): I_D -> X_H (complete item from head)
+    - Projection productions P_H^(1): I_D or I_r^(τ-1,τ) -> X_H
     - Expansion productions P_H^(2): partial item extensions
 *)
 
 (** Partial h-item I_r^(s,t).
 
     Represents partial recognition of production r,
-    having processed symbols from position s to t (1-indexed, inclusive).
+    having processed symbols from boundary s to t (0-indexed, inclusive).
 *)
 type partial_item = {
   prod_idx : int;  (** Production index r *)
-  s : int;         (** Left boundary (1-indexed) *)
-  t : int;         (** Right boundary (1-indexed) *)
+  s : int;         (** Left boundary (0-indexed) *)
+  t : int;         (** Right boundary (0-indexed) *)
 }
 
 (** Complete h-item I_A.
@@ -37,7 +37,7 @@ type hitem =
     where D is a nonterminal and X is its head.
 *)
 type projection_prod = {
-  lhs : complete_item;      (** I_D *)
+  lhs : hitem;              (** I_D or I_r^(τ-1,τ) for n_r>1 *)
   head : Grammar.symbol;    (** X_H (the head symbol) *)
   proj_prod_idx : int;      (** Which production this projects from *)
 }
@@ -47,7 +47,7 @@ type projection_prod = {
     Extends a partial item leftward.
 *)
 type left_expand_prod = {
-  left_result : partial_item;   (** I_r^(s-1,t) *)
+  left_result : hitem;          (** I_r^(s-1,t) or I_D *)
   left_symbol : Grammar.symbol; (** X_{s-1} *)
   left_source : partial_item;   (** I_r^(s,t) *)
 }
@@ -57,19 +57,9 @@ type left_expand_prod = {
     Extends a partial item rightward.
 *)
 type right_expand_prod = {
-  right_result : partial_item;   (** I_r^(s,t+1) *)
+  right_result : hitem;          (** I_r^(s,t+1) or I_D *)
   right_source : partial_item;   (** I_r^(s,t) *)
   right_symbol : Grammar.symbol; (** X_{t+1} *)
-}
-
-(** Completion production: I_A -> I_r^(1,|alpha|)
-
-    Completes a nonterminal when a partial item spans the full RHS.
-*)
-type complete_prod = {
-  comp_result : complete_item;   (** I_A *)
-  comp_source : partial_item;    (** I_r^(1,|alpha|) *)
-  comp_prod_idx : int;           (** Production index *)
 }
 
 (** The h-cover of a grammar. *)
@@ -90,9 +80,6 @@ val get_left_expansions : t -> partial_item -> left_expand_prod list
 (** Get right-expansion productions for a partial item. *)
 val get_right_expansions : t -> partial_item -> right_expand_prod list
 
-(** Get completion production for a partial item (if it spans full RHS). *)
-val get_completion : t -> partial_item -> complete_prod option
-
 (** Get initial partial item for a production (just the head). *)
 val initial_item : t -> int -> partial_item
 
@@ -106,3 +93,7 @@ val pp_partial : Format.formatter -> partial_item -> unit
 val pp_complete : Format.formatter -> complete_item -> unit
 val pp_hitem : Format.formatter -> hitem -> unit
 val pp : Format.formatter -> t -> unit
+
+(** Verbose pretty printer with explanations.
+    Shows source productions and explains what each rule means. *)
+val pp_explain : Format.formatter -> t -> unit
