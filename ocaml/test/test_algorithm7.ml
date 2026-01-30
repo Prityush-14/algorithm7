@@ -48,8 +48,13 @@ let test_grammar () =
       ignore (Grammar.add_production (Grammar.create ()) ~lhs:"S" ~rhs:["NP"; "VP"] ~head_pos:3));
 
     (* Empty RHS validation *)
-    check_raises "empty rhs raises" (fun () ->
+    let g_eps = Grammar.create () in
+    let idx = Grammar.add_production g_eps ~lhs:"S" ~rhs:[] ~head_pos:0 in
+    check "empty rhs allowed with head_pos=0" (idx = 0);
+    check_raises "empty rhs head_pos=1 raises" (fun () ->
       ignore (Grammar.add_production (Grammar.create ()) ~lhs:"S" ~rhs:[] ~head_pos:1));
+    check_raises "head of empty rhs raises" (fun () ->
+      ignore (Grammar.head (Grammar.get_production g_eps 0)));
 
     (* Add production *)
     let g = Grammar.create () in
@@ -82,6 +87,26 @@ let test_grammar () =
     let prod = Grammar.get_production g 0 in
     check "default head_pos is 1" (prod.head_pos = 1);
     check "default head is a" (Grammar.head prod = "a");
+
+    (* Epsilon production parsing *)
+    let g = Grammar.from_string "S -> ε" in
+    let prod = Grammar.get_production g 0 in
+    check "epsilon rhs length 0" (Array.length prod.rhs = 0);
+    check "epsilon head_pos 0" (prod.head_pos = 0);
+    check "nullable S includes epsilon" (List.mem "S" (Grammar.nullable_nonterminals g));
+
+    (* Ensure single start production *)
+    let g = Grammar.from_string {|
+      S -> [a]
+      S -> [b]
+    |} in
+    let g2 = Grammar.ensure_single_start g in
+    check "normalized start changes" (Grammar.start g2 <> Grammar.start g);
+    let prods = Grammar.productions g2 in
+    let start_count =
+      Array.fold_left (fun acc p -> if p.Grammar.lhs = Grammar.start g2 then acc + 1 else acc) 0 prods
+    in
+    check "single start production" (start_count = 1);
 
     (* Terminals and nonterminals *)
     let g = Grammar.from_string {|
@@ -133,7 +158,7 @@ let test_hcover () =
     let left_exps = Hcover.get_left_expansions hc initial in
     check "1 left expansion" (List.length left_exps = 1);
     let exp = List.hd left_exps in
-    check "left symbol is cl" (exp.left_symbol = "cl");
+    check "left symbol is cl" (exp.Hcover.left_symbol = Some "cl");
     (match exp.left_result with
      | Hcover.Partial p ->
        check "left result s=0" (p.s = 0);
@@ -144,7 +169,7 @@ let test_hcover () =
     let right_exps = Hcover.get_right_expansions hc initial in
     check "1 right expansion" (List.length right_exps = 1);
     let exp = List.hd right_exps in
-    check "right symbol is NP" (exp.right_symbol = "NP");
+    check "right symbol is NP" (exp.Hcover.right_symbol = Some "NP");
     (match exp.right_result with
      | Hcover.Partial p ->
        check "right result s=1" (p.s = 1);
@@ -156,10 +181,20 @@ let test_hcover () =
     let right_exps = Hcover.get_right_expansions hc head_item in
     check "1 right completion expansion" (List.length right_exps = 1);
     let exp = List.hd right_exps in
-    check "right completion symbol is n" (exp.right_symbol = "n");
+    check "right completion symbol is n" (exp.Hcover.right_symbol = Some "n");
     (match exp.right_result with
      | Hcover.Complete c -> check "completion result is NP" (c.symbol = "NP")
-     | Hcover.Partial _ -> check "completion result is complete" false)
+     | Hcover.Partial _ -> check "completion result is complete" false);
+
+    (* Nullable left expansion adds epsilon skip *)
+    let g = Grammar.from_string {|
+      S -> A [b]
+      A -> ε
+    |} in
+    let hc = Hcover.create g in
+    let initial = Hcover.initial_item hc 0 in
+    let left_exps = Hcover.get_left_expansions hc initial in
+    check "nullable left has epsilon skip" (List.exists (fun e -> e.Hcover.left_symbol = None) left_exps)
   )
 
 (* ============== Recognizer Tests ============== *)
@@ -210,7 +245,20 @@ let test_recognizer () =
     check "ambiguous: accept 'a'" (Recognizer.recognize rec' ["a"]);
     check "ambiguous: accept 'a plus a'" (Recognizer.recognize rec' ["a"; "plus"; "a"]);
     check "ambiguous: accept 'a plus a plus a'" (Recognizer.recognize rec' ["a"; "plus"; "a"; "plus"; "a"]);
-    check "ambiguous: reject 'plus'" (not (Recognizer.recognize rec' ["plus"]))
+    check "ambiguous: reject 'plus'" (not (Recognizer.recognize rec' ["plus"]));
+
+    (* Epsilon productions *)
+    let g = Grammar.from_string {|
+      S -> [b] A
+      A -> ε
+    |} in
+    let rec' = Recognizer.create g in
+    check "epsilon: accept 'b'" (Recognizer.recognize rec' ["b"]);
+    check "epsilon: reject empty" (not (Recognizer.recognize rec' []));
+
+    let g = Grammar.from_string "S -> ε" in
+    let rec' = Recognizer.create g in
+    check "epsilon: accept empty for S -> ε" (Recognizer.recognize rec' [])
   )
 
 (* ============== Integration Tests ============== *)

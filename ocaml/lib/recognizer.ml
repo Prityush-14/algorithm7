@@ -37,16 +37,34 @@ end)
 
 module LeftExpandSet = Set.Make(struct
   type t = Hcover.left_expand_prod
+  let compare_symbol_opt a b =
+    match a, b with
+    | None, None -> 0
+    | None, Some _ -> -1
+    | Some _, None -> 1
+    | Some sa, Some sb -> String.compare sa sb
   let compare a b =
     let c = Hcover.compare_partial a.Hcover.left_source b.Hcover.left_source in
-    if c <> 0 then c else Hcover.compare_hitem a.Hcover.left_result b.Hcover.left_result
+    if c <> 0 then c else
+    let c = Hcover.compare_hitem a.Hcover.left_result b.Hcover.left_result in
+    if c <> 0 then c else
+    compare_symbol_opt a.Hcover.left_symbol b.Hcover.left_symbol
 end)
 
 module RightExpandSet = Set.Make(struct
   type t = Hcover.right_expand_prod
+  let compare_symbol_opt a b =
+    match a, b with
+    | None, None -> 0
+    | None, Some _ -> -1
+    | Some _, None -> 1
+    | Some sa, Some sb -> String.compare sa sb
   let compare a b =
     let c = Hcover.compare_partial a.Hcover.right_source b.Hcover.right_source in
-    if c <> 0 then c else Hcover.compare_hitem a.Hcover.right_result b.Hcover.right_result
+    if c <> 0 then c else
+    let c = Hcover.compare_hitem a.Hcover.right_result b.Hcover.right_result in
+    if c <> 0 then c else
+    compare_symbol_opt a.Hcover.right_symbol b.Hcover.right_symbol
 end)
 
 type used_hcover = {
@@ -112,6 +130,7 @@ let empty_used = {
 }
 
 let create ?(config = default_config) grammar =
+  let grammar = Grammar.ensure_single_start grammar in
   let hcover = Hcover.create grammar in
   { config; hcover; last_used = empty_used; last_derivations = DerivMap.empty; last_n = 0 }
 
@@ -168,37 +187,49 @@ let process_partial t state i j (item : Hcover.partial_item) =
       let symbol = exp.left_symbol in
       let new_item = exp.left_result in
 
-      if Grammar.is_terminal grammar symbol then begin
-        (* Terminal: check if token at i-1 matches *)
-        if i > 0 && state.tokens.(i - 1) = symbol then
-          if add_to_matrix state (i - 1) j new_item then begin
-            Queue.add (i - 1, j, new_item) state.agenda;
-            state.used_left_expansions <- LeftExpandSet.add exp state.used_left_expansions;
-            record_derivation state (i - 1) j new_item
-              ~rule:(Some (RuleLeftExpand exp))
-              ~children:[(i, j, Hcover.Partial item)]
-              ~terminal:(Some symbol);
-            state.q_right <- q_add state.q_right (i, j) item
-          end
-      end else begin
-        (* Nonterminal: look for I_symbol in T[k, i] for all k < i *)
-        let target = Hcover.Complete { symbol } in
-        for k = 0 to i - 1 do
-          let key = (k, i) in
-          match SpanMap.find_opt key state.matrix with
-          | Some items when HItemSet.mem target items ->
-            if add_to_matrix state k j new_item then begin
-              Queue.add (k, j, new_item) state.agenda;
+      match symbol with
+      | None ->
+        if add_to_matrix state i j new_item then begin
+          Queue.add (i, j, new_item) state.agenda;
+          state.used_left_expansions <- LeftExpandSet.add exp state.used_left_expansions;
+          record_derivation state i j new_item
+            ~rule:(Some (RuleLeftExpand exp))
+            ~children:[(i, j, Hcover.Partial item)]
+            ~terminal:(Some "ε");
+          state.q_right <- q_add state.q_right (i, j) item
+        end
+      | Some symbol ->
+        if Grammar.is_terminal grammar symbol then begin
+          (* Terminal: check if token at i-1 matches *)
+          if i > 0 && state.tokens.(i - 1) = symbol then
+            if add_to_matrix state (i - 1) j new_item then begin
+              Queue.add (i - 1, j, new_item) state.agenda;
               state.used_left_expansions <- LeftExpandSet.add exp state.used_left_expansions;
-              record_derivation state k j new_item
+              record_derivation state (i - 1) j new_item
                 ~rule:(Some (RuleLeftExpand exp))
-                ~children:[(k, i, target); (i, j, Hcover.Partial item)]
-                ~terminal:None;
+                ~children:[(i, j, Hcover.Partial item)]
+                ~terminal:(Some symbol);
               state.q_right <- q_add state.q_right (i, j) item
             end
-          | _ -> ()
-        done
-      end
+        end else begin
+          (* Nonterminal: look for I_symbol in T[k, i] for all k < i *)
+          let target = Hcover.Complete { symbol } in
+          for k = 0 to i - 1 do
+            let key = (k, i) in
+            match SpanMap.find_opt key state.matrix with
+            | Some items when HItemSet.mem target items ->
+              if add_to_matrix state k j new_item then begin
+                Queue.add (k, j, new_item) state.agenda;
+                state.used_left_expansions <- LeftExpandSet.add exp state.used_left_expansions;
+                record_derivation state k j new_item
+                  ~rule:(Some (RuleLeftExpand exp))
+                  ~children:[(k, i, target); (i, j, Hcover.Partial item)]
+                  ~terminal:None;
+                state.q_right <- q_add state.q_right (i, j) item
+              end
+            | _ -> ()
+          done
+        end
     ) (Hcover.get_left_expansions hcover item);
 
   (* Right expansion *)
@@ -207,37 +238,49 @@ let process_partial t state i j (item : Hcover.partial_item) =
       let symbol = exp.right_symbol in
       let new_item = exp.right_result in
 
-      if Grammar.is_terminal grammar symbol then begin
-        (* Terminal: check if token at j matches *)
-        if j < state.n && state.tokens.(j) = symbol then
-          if add_to_matrix state i (j + 1) new_item then begin
-            Queue.add (i, j + 1, new_item) state.agenda;
-            state.used_right_expansions <- RightExpandSet.add exp state.used_right_expansions;
-            record_derivation state i (j + 1) new_item
-              ~rule:(Some (RuleRightExpand exp))
-              ~children:[(i, j, Hcover.Partial item)]
-              ~terminal:(Some symbol);
-            state.q_left <- q_add state.q_left (i, j) item
-          end
-      end else begin
-        (* Nonterminal: look for I_symbol in T[j, k] for all k > j *)
-        let target = Hcover.Complete { symbol } in
-        for k = j + 1 to state.n do
-          let key = (j, k) in
-          match SpanMap.find_opt key state.matrix with
-          | Some items when HItemSet.mem target items ->
-            if add_to_matrix state i k new_item then begin
-              Queue.add (i, k, new_item) state.agenda;
+      match symbol with
+      | None ->
+        if add_to_matrix state i j new_item then begin
+          Queue.add (i, j, new_item) state.agenda;
+          state.used_right_expansions <- RightExpandSet.add exp state.used_right_expansions;
+          record_derivation state i j new_item
+            ~rule:(Some (RuleRightExpand exp))
+            ~children:[(i, j, Hcover.Partial item)]
+            ~terminal:(Some "ε");
+          state.q_left <- q_add state.q_left (i, j) item
+        end
+      | Some symbol ->
+        if Grammar.is_terminal grammar symbol then begin
+          (* Terminal: check if token at j matches *)
+          if j < state.n && state.tokens.(j) = symbol then
+            if add_to_matrix state i (j + 1) new_item then begin
+              Queue.add (i, j + 1, new_item) state.agenda;
               state.used_right_expansions <- RightExpandSet.add exp state.used_right_expansions;
-              record_derivation state i k new_item
+              record_derivation state i (j + 1) new_item
                 ~rule:(Some (RuleRightExpand exp))
-                ~children:[(i, j, Hcover.Partial item); (j, k, target)]
-                ~terminal:None;
+                ~children:[(i, j, Hcover.Partial item)]
+                ~terminal:(Some symbol);
               state.q_left <- q_add state.q_left (i, j) item
             end
-          | _ -> ()
-        done
-      end
+        end else begin
+          (* Nonterminal: look for I_symbol in T[j, k] for all k > j *)
+          let target = Hcover.Complete { symbol } in
+          for k = j + 1 to state.n do
+            let key = (j, k) in
+            match SpanMap.find_opt key state.matrix with
+            | Some items when HItemSet.mem target items ->
+              if add_to_matrix state i k new_item then begin
+                Queue.add (i, k, new_item) state.agenda;
+                state.used_right_expansions <- RightExpandSet.add exp state.used_right_expansions;
+                record_derivation state i k new_item
+                  ~rule:(Some (RuleRightExpand exp))
+                  ~children:[(i, j, Hcover.Partial item); (j, k, target)]
+                  ~terminal:None;
+                state.q_left <- q_add state.q_left (i, j) item
+              end
+            | _ -> ()
+          done
+        end
     ) (Hcover.get_right_expansions hcover item)
 
 let process_complete t state i j (item : Hcover.complete_item) =
@@ -267,7 +310,7 @@ let process_complete t state i j (item : Hcover.complete_item) =
         | Partial pitem ->
           if q_mem state.q_left (j, k) pitem then () else
           List.iter (fun (exp : Hcover.left_expand_prod) ->
-            if exp.left_symbol = symbol then
+            if exp.left_symbol = Some symbol then
               if add_to_matrix state i k exp.left_result then begin
                 Queue.add (i, k, exp.left_result) state.agenda;
                 state.used_left_expansions <- LeftExpandSet.add exp state.used_left_expansions;
@@ -293,7 +336,7 @@ let process_complete t state i j (item : Hcover.complete_item) =
         | Partial pitem ->
           if q_mem state.q_right (k, i) pitem then () else
           List.iter (fun (exp : Hcover.right_expand_prod) ->
-            if exp.right_symbol = symbol then
+            if exp.right_symbol = Some symbol then
               if add_to_matrix state k j exp.right_result then begin
                 Queue.add (k, j, exp.right_result) state.agenda;
                 state.used_right_expansions <- RightExpandSet.add exp state.used_right_expansions;
@@ -332,6 +375,17 @@ let recognize t tokens =
 
   (* Step 1: Initialize - scan terminals and start projections *)
   debug_print t.config "@.=== INIT STEP ===@.";
+
+  let nullables = Grammar.nullable_nonterminals (Hcover.grammar hcover) in
+  List.iter (fun sym ->
+    for i = 0 to n do
+      let item = Hcover.Complete { symbol = sym } in
+      if add_to_matrix state i i item then begin
+        Queue.add (i, i, item) state.agenda;
+        record_derivation state i i item ~rule:None ~children:[] ~terminal:(Some "ε")
+      end
+    done
+  ) nullables;
 
   Array.iteri (fun i token ->
     debug_print t.config "Position %d: terminal '%s'@." i token;
@@ -393,13 +447,13 @@ let pp_used_hcover fmt (used : used_hcover) =
   ) used.used_projections;
   Format.fprintf fmt "  Left Expansions:@.";
   LeftExpandSet.iter (fun e ->
-    Format.fprintf fmt "    %a -> %s %a@."
-      Hcover.pp_hitem e.left_result e.left_symbol Hcover.pp_partial e.left_source
+    Format.fprintf fmt "    %a -> %a %a@."
+      Hcover.pp_hitem e.left_result Hcover.pp_symbol_opt e.left_symbol Hcover.pp_partial e.left_source
   ) used.used_left_expansions;
   Format.fprintf fmt "  Right Expansions:@.";
   RightExpandSet.iter (fun e ->
-    Format.fprintf fmt "    %a -> %a %s@."
-      Hcover.pp_hitem e.right_result Hcover.pp_partial e.right_source e.right_symbol
+    Format.fprintf fmt "    %a -> %a %a@."
+      Hcover.pp_hitem e.right_result Hcover.pp_partial e.right_source Hcover.pp_symbol_opt e.right_symbol
   ) used.used_right_expansions
 
 let pp_used_hcover_explain grammar fmt (used : used_hcover) =
@@ -425,8 +479,8 @@ let pp_used_hcover_explain grammar fmt (used : used_hcover) =
   Format.fprintf fmt "----------------------------------------@.";
   LeftExpandSet.iter (fun e ->
     let prod = prods.(e.left_source.prod_idx) in
-    Format.fprintf fmt "  %a -> %s %a@."
-      Hcover.pp_hitem e.left_result e.left_symbol Hcover.pp_partial e.left_source;
+    Format.fprintf fmt "  %a -> %a %a@."
+      Hcover.pp_hitem e.left_result Hcover.pp_symbol_opt e.left_symbol Hcover.pp_partial e.left_source;
     Format.fprintf fmt "    Source: [%d] %a@."
       e.left_source.prod_idx Grammar.pp_production prod;
     Format.fprintf fmt "@."
@@ -436,8 +490,8 @@ let pp_used_hcover_explain grammar fmt (used : used_hcover) =
   Format.fprintf fmt "----------------------------------------@.";
   RightExpandSet.iter (fun e ->
     let prod = prods.(e.right_source.prod_idx) in
-    Format.fprintf fmt "  %a -> %a %s@."
-      Hcover.pp_hitem e.right_result Hcover.pp_partial e.right_source e.right_symbol;
+    Format.fprintf fmt "  %a -> %a %a@."
+      Hcover.pp_hitem e.right_result Hcover.pp_partial e.right_source Hcover.pp_symbol_opt e.right_symbol;
     Format.fprintf fmt "    Source: [%d] %a@."
       e.right_source.prod_idx Grammar.pp_production prod;
     Format.fprintf fmt "@."

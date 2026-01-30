@@ -22,6 +22,7 @@ Head-driven tabular recognizer (Algorithm 7)
 Options:
   -g, --grammar FILE    Path to grammar file
   -e, --example         Use the example grammar from the paper
+  --start SYMBOL        Start symbol (default: S)
   --show-grammar        Print the grammar and exit
   --show-hcover         Print the h-cover and exit
   --show-used-rules     After recognition, show only used H-cover rules
@@ -41,6 +42,7 @@ Example:
 type options = {
   mutable grammar_file : string option;
   mutable use_example : bool;
+  mutable start_symbol : string;
   mutable show_grammar : bool;
   mutable show_hcover : bool;
   mutable show_used_rules : bool;
@@ -54,6 +56,7 @@ let parse_args () =
   let opts = {
     grammar_file = None;
     use_example = false;
+    start_symbol = "S";
     show_grammar = false;
     show_hcover = false;
     show_used_rules = false;
@@ -71,6 +74,9 @@ let parse_args () =
       parse rest
     | ("-e" | "--example") :: rest ->
       opts.use_example <- true;
+      parse rest
+    | "--start" :: sym :: rest ->
+      opts.start_symbol <- sym;
       parse rest
     | "--show-grammar" :: rest ->
       opts.show_grammar <- true;
@@ -106,13 +112,13 @@ let () =
   (* Load grammar *)
   let grammar =
     if opts.use_example then
-      Grammar.from_string example_grammar
+      Grammar.from_string ~start:opts.start_symbol example_grammar
     else match opts.grammar_file with
       | Some path ->
         let ic = open_in path in
         let content = really_input_string ic (in_channel_length ic) in
         close_in ic;
-        Grammar.from_string content
+        Grammar.from_string ~start:opts.start_symbol content
       | None ->
         Printf.eprintf "Error: Must specify --grammar or --example\n";
         exit 1
@@ -127,10 +133,10 @@ let () =
   (* Create recognizer *)
   let config = Recognizer.{ debug = opts.debug } in
   let recognizer = Recognizer.create ~config grammar in
+  let hcover = Recognizer.hcover recognizer in
 
   (* Show h-cover if requested *)
   if opts.show_hcover then begin
-    let hcover = Recognizer.hcover recognizer in
     if opts.explain then
       Format.printf "%a@." Hcover.pp_explain hcover
     else
@@ -160,8 +166,9 @@ let () =
     if opts.show_used_rules then begin
       Printf.printf "\n";
       let used = Recognizer.get_used_hcover recognizer in
+      let used_grammar = Hcover.grammar hcover in
       if opts.explain then
-        Format.printf "%a@." (Recognizer.pp_used_hcover_explain grammar) used
+        Format.printf "%a@." (Recognizer.pp_used_hcover_explain used_grammar) used
       else
         Format.printf "%a@." Recognizer.pp_used_hcover used
     end;

@@ -48,7 +48,7 @@ type projection_prod = {
 *)
 type left_expand_prod = {
   left_result : hitem;          (** I_r^(s-1,t) or I_D *)
-  left_symbol : Grammar.symbol; (** X_{s-1} *)
+  left_symbol : Grammar.symbol option; (** X_{s-1} or ε *)
   left_source : partial_item;   (** I_r^(s,t) *)
 }
 
@@ -59,7 +59,7 @@ type left_expand_prod = {
 type right_expand_prod = {
   right_result : hitem;          (** I_r^(s,t+1) or I_D *)
   right_source : partial_item;   (** I_r^(s,t) *)
-  right_symbol : Grammar.symbol; (** X_{t+1} *)
+  right_symbol : Grammar.symbol option; (** X_{t+1} or ε *)
 }
 
 (** The h-cover of a grammar. *)
@@ -92,6 +92,7 @@ val compare_hitem : hitem -> hitem -> int
 val pp_partial : Format.formatter -> partial_item -> unit
 val pp_complete : Format.formatter -> complete_item -> unit
 val pp_hitem : Format.formatter -> hitem -> unit
+val pp_symbol_opt : Format.formatter -> Grammar.symbol option -> unit
 val pp : Format.formatter -> t -> unit
 
 (** Verbose pretty printer with explanations.

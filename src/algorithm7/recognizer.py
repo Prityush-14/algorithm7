@@ -68,6 +68,7 @@ class UsedHCover:
     def format(self, explain: bool = False) -> str:
         """Format the used H-cover for display."""
         lines = []
+        symbol_text = lambda s: s if s is not None else "ε"
 
         if explain:
             lines.append("Used H-Cover Rules (only rules applied during recognition)")
@@ -104,7 +105,7 @@ class UsedHCover:
         for e in sorted(self.left_expansions, key=lambda x: (x.source.prod_idx, x.source.s, x.source.t)):
             if explain:
                 prod = self.grammar.productions[e.source.prod_idx]
-                lines.append(f"  {e.result} -> {e.symbol} {e.source}")
+                lines.append(f"  {e.result} -> {symbol_text(e.symbol)} {e.source}")
                 lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
                 lines.append("")
             else:
@@ -120,7 +121,7 @@ class UsedHCover:
         for e in sorted(self.right_expansions, key=lambda x: (x.source.prod_idx, x.source.s, x.source.t)):
             if explain:
                 prod = self.grammar.productions[e.source.prod_idx]
-                lines.append(f"  {e.result} -> {e.source} {e.symbol}")
+                lines.append(f"  {e.result} -> {e.source} {symbol_text(e.symbol)}")
                 lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
                 lines.append("")
             else:
@@ -164,6 +165,7 @@ class Recognizer:
     _derivations: dict[tuple[int, int, HItem], DerivationStep] = field(default_factory=dict, repr=False)
 
     def __post_init__(self):
+        self.grammar = self.grammar.with_single_start()
         self.hcover = HCover(self.grammar)
 
     def _reset(self):
@@ -248,6 +250,17 @@ class Recognizer:
         if self.debug:
             print("\n=== INIT STEP ===")
 
+        nullables = self.grammar.nullable_nonterminals()
+        if nullables:
+            for i in range(n + 1):
+                for sym in nullables:
+                    item = CompleteItem(sym)
+                    if self._add_to_T(i, i, item):
+                        self._agenda.append((i, i, item))
+                        self._record_derivation(i, i, item, terminal="ε")
+                        if self.debug:
+                            print(f"  Added: T[{i},{i}] += {item} (ε)")
+
         for i, token in enumerate(tokens):
             if self.debug:
                 print(f"Position {i}: terminal '{token}'")
@@ -297,6 +310,16 @@ class Recognizer:
                 symbol = exp.symbol
                 new_item = exp.result
 
+                if symbol is None:
+                    if self._add_to_T(i, j, new_item):
+                        self._agenda.append((i, j, new_item))
+                        self._used_left_expansions.add(exp)
+                        self._record_derivation(i, j, new_item, rule=exp, children=[(i, j, item)], terminal="ε")
+                        self._q_right(i, j).add(item)
+                        if self.debug:
+                            print(f"  Added: T[{i},{j}] += {new_item} (ε)")
+                    continue
+
                 if self.grammar.is_terminal(symbol):
                     # Terminal: check if token at i-1 matches
                     if i > 0 and self._tokens[i - 1] == symbol:
@@ -325,6 +348,16 @@ class Recognizer:
             for exp in self.hcover.get_right_expansions(item):
                 symbol = exp.symbol
                 new_item = exp.result
+
+                if symbol is None:
+                    if self._add_to_T(i, j, new_item):
+                        self._agenda.append((i, j, new_item))
+                        self._used_right_expansions.add(exp)
+                        self._record_derivation(i, j, new_item, rule=exp, children=[(i, j, item)], terminal="ε")
+                        self._q_left(i, j).add(item)
+                        if self.debug:
+                            print(f"  Added: T[{i},{j}] += {new_item} (ε)")
+                    continue
 
                 if self.grammar.is_terminal(symbol):
                     # Terminal: check if token at j matches

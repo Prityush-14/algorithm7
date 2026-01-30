@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+EPSILON_TOKENS = {"ε", "eps", "epsilon"}
+
 
 @dataclass
 class Production:
@@ -18,22 +20,29 @@ class Production:
 
     def __post_init__(self):
         if not self.rhs:
-            raise ValueError("Production RHS cannot be empty")
-        if not 1 <= self.head_pos <= len(self.rhs):
-            raise ValueError(
-                f"Head position {self.head_pos} out of range for RHS of length {len(self.rhs)}"
-            )
+            if self.head_pos != 0:
+                raise ValueError("Empty RHS must use head_pos=0")
+        else:
+            if not 1 <= self.head_pos <= len(self.rhs):
+                raise ValueError(
+                    f"Head position {self.head_pos} out of range for RHS of length {len(self.rhs)}"
+                )
 
     @property
     def head(self) -> str:
         """Return the head symbol of this production."""
+        if not self.rhs:
+            raise ValueError("Empty RHS has no head")
         return self.rhs[self.head_pos - 1]
 
     def __repr__(self) -> str:
-        rhs_str = " ".join(
-            f"[{s}]" if i == self.head_pos - 1 else s
-            for i, s in enumerate(self.rhs)
-        )
+        if not self.rhs:
+            rhs_str = "ε"
+        else:
+            rhs_str = " ".join(
+                f"[{s}]" if i == self.head_pos - 1 else s
+                for i, s in enumerate(self.rhs)
+            )
         return f"{self.lhs} → {rhs_str}"
 
 
@@ -55,6 +64,17 @@ class Grammar:
         self.nonterminals = {p.lhs for p in self.productions}
         rhs_symbols = {sym for p in self.productions for sym in p.rhs}
         self.terminals = rhs_symbols - self.nonterminals
+
+    def _unique_start_symbol(self) -> str:
+        """Generate a start symbol not used elsewhere in the grammar."""
+        existing = self.nonterminals | self.terminals | {self.start}
+        base = f"{self.start}_START"
+        candidate = base
+        counter = 1
+        while candidate in existing:
+            candidate = f"{base}{counter}"
+            counter += 1
+        return candidate
 
     def add_production(self, lhs: str, rhs: tuple[str, ...], head_pos: int) -> int:
         """Add a production and return its index."""
@@ -93,6 +113,12 @@ class Grammar:
             S -> NP [VP]
             VP -> cl [v] NP
             NP -> [det] n
+
+        Epsilon productions can be written as:
+            A -> ε
+            A -> eps
+            A -> epsilon
+            A ->
         """
         grammar = cls(start)
         for line in text.strip().split("\n"):
@@ -107,15 +133,22 @@ class Grammar:
             lhs = lhs.strip()
 
             rhs_parts = rhs_str.split()
+            if not rhs_parts or (len(rhs_parts) == 1 and rhs_parts[0] in EPSILON_TOKENS):
+                grammar.add_production(lhs, tuple(), 0)
+                continue
             rhs = []
             head_pos = None
 
             for i, part in enumerate(rhs_parts):
                 if part.startswith("[") and part.endswith("]"):
                     symbol = part[1:-1]
+                    if symbol in EPSILON_TOKENS:
+                        raise ValueError("Cannot mark epsilon as head")
                     head_pos = i + 1  # 1-indexed
                 else:
                     symbol = part
+                if symbol in EPSILON_TOKENS:
+                    raise ValueError("Epsilon production must be empty (no symbols)")
                 rhs.append(symbol)
 
             if head_pos is None:
@@ -124,6 +157,49 @@ class Grammar:
             grammar.add_production(lhs, tuple(rhs), head_pos)
 
         return grammar
+
+    def nullable_nonterminals(self) -> set[str]:
+        """Compute the set of nullable nonterminals (A =>* ε)."""
+        nullable = {p.lhs for p in self.productions if not p.rhs}
+        changed = True
+        while changed:
+            changed = False
+            for p in self.productions:
+                if p.lhs in nullable:
+                    continue
+                if not p.rhs:
+                    nullable.add(p.lhs)
+                    changed = True
+                    continue
+                all_nullable = True
+                for sym in p.rhs:
+                    if sym not in self.nonterminals:
+                        all_nullable = False
+                        break
+                    if sym not in nullable:
+                        all_nullable = False
+                        break
+                if all_nullable:
+                    nullable.add(p.lhs)
+                    changed = True
+        return nullable
+
+    def with_single_start(self) -> "Grammar":
+        """Return a grammar with a single start production.
+
+        If multiple productions rewrite the start symbol, a fresh start
+        symbol S' is introduced with a single production S' -> S.
+        """
+        start_prods = [p for p in self.productions if p.lhs == self.start]
+        if len(start_prods) <= 1:
+            return self
+
+        new_start = self._unique_start_symbol()
+        normalized = Grammar(start=new_start)
+        for prod in self.productions:
+            normalized.add_production(prod.lhs, prod.rhs, prod.head_pos)
+        normalized.add_production(new_start, (self.start,), head_pos=1)
+        return normalized
 
     def __repr__(self) -> str:
         lines = [f"Grammar(start={self.start!r})"]

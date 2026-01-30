@@ -69,12 +69,13 @@ class LeftExpandProd:
     Extends a partial item leftward.
     """
     result: HItem        # I_r^(s-1,t) or I_D (completion)
-    symbol: str          # X_{s-1}
+    symbol: str | None   # X_{s-1} (None means ε-skip)
     source: PartialItem  # I_r^(s,t)
     direction: str = "left"
 
     def __repr__(self) -> str:
-        return f"{self.result} → {self.symbol} {self.source}"
+        sym = self.symbol if self.symbol is not None else "ε"
+        return f"{self.result} → {sym} {self.source}"
 
 
 @dataclass(frozen=True)
@@ -86,11 +87,12 @@ class RightExpandProd:
     """
     result: HItem        # I_r^(s,t+1) or I_D (completion)
     source: PartialItem  # I_r^(s,t)
-    symbol: str          # X_{t+1}
+    symbol: str | None   # X_{t+1} (None means ε-skip)
     direction: str = "right"
 
     def __repr__(self) -> str:
-        return f"{self.result} → {self.source} {self.symbol}"
+        sym = self.symbol if self.symbol is not None else "ε"
+        return f"{self.result} → {self.source} {sym}"
 
 
 class HCover:
@@ -104,6 +106,7 @@ class HCover:
 
     def __init__(self, grammar: Grammar):
         self.grammar = grammar
+        self.nullables = grammar.nullable_nonterminals()
 
         # P_H^(1): Projection productions indexed by head symbol
         self.projections: dict[str, list[ProjectionProd]] = {}
@@ -117,6 +120,8 @@ class HCover:
     def _build(self):
         """Build the h-cover from the grammar."""
         for r, prod in enumerate(self.grammar.productions):
+            if len(prod.rhs) == 0:
+                continue
             tau = prod.head_pos  # Head position (1-indexed)
             n = len(prod.rhs)    # RHS length
 
@@ -146,6 +151,10 @@ class HCover:
                     symbol = prod.rhs[s]  # Z_{r,s+1}
                     exp = LeftExpandProd(result, symbol, source)
                     self.left_expansions.setdefault(source, []).append(exp)
+                    if symbol in self.nullables:
+                        self.left_expansions[source].append(
+                            LeftExpandProd(result, None, source)
+                        )
 
             # Right expansions: I_r^(s,t) -> I_r^(s,t-1) Y_H
             for s in range(0, tau):
@@ -157,6 +166,10 @@ class HCover:
                     symbol = prod.rhs[t - 1]  # Z_{r,t}
                     exp = RightExpandProd(result, source, symbol)
                     self.right_expansions.setdefault(source, []).append(exp)
+                    if symbol in self.nullables:
+                        self.right_expansions[source].append(
+                            RightExpandProd(result, source, None)
+                        )
 
             # Completions (P_H^(2)(b)) as expansions to complete I_D
             # Left completion: I_D -> X_H I_r^(1,n)
@@ -165,6 +178,10 @@ class HCover:
                 symbol = prod.rhs[0]
                 comp = LeftExpandProd(CompleteItem(prod.lhs), symbol, source)
                 self.left_expansions.setdefault(source, []).append(comp)
+                if symbol in self.nullables:
+                    self.left_expansions[source].append(
+                        LeftExpandProd(CompleteItem(prod.lhs), None, source)
+                    )
 
             # Right completion: I_D -> I_r^(0,n-1) Y_H
             if tau < n:
@@ -172,6 +189,10 @@ class HCover:
                 symbol = prod.rhs[n - 1]
                 comp = RightExpandProd(CompleteItem(prod.lhs), source, symbol)
                 self.right_expansions.setdefault(source, []).append(comp)
+                if symbol in self.nullables:
+                    self.right_expansions[source].append(
+                        RightExpandProd(CompleteItem(prod.lhs), source, None)
+                    )
 
     def get_projections(self, head: str) -> list[ProjectionProd]:
         """Get projection productions for a head symbol."""
@@ -246,12 +267,13 @@ class HCover:
             for e in exps:
                 if explain:
                     prod = self.grammar.productions[e.source.prod_idx]
-                    lines.append(f"  {e.result} -> {e.symbol} {e.source}")
+                    sym = e.symbol if e.symbol is not None else "ε"
+                    lines.append(f"  {e.result} -> {sym} {e.source}")
                     lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
                     if isinstance(e.result, PartialItem):
-                        lines.append(f"    Meaning: Extend left by consuming '{e.symbol}' at boundary {e.result.s}")
+                        lines.append(f"    Meaning: Extend left by consuming '{sym}' at boundary {e.result.s}")
                     else:
-                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{e.symbol}' on the left")
+                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{sym}' on the left")
                     lines.append("")
                 else:
                     lines.append(f"    {e}")
@@ -268,12 +290,13 @@ class HCover:
             for e in exps:
                 if explain:
                     prod = self.grammar.productions[e.source.prod_idx]
-                    lines.append(f"  {e.result} -> {e.source} {e.symbol}")
+                    sym = e.symbol if e.symbol is not None else "ε"
+                    lines.append(f"  {e.result} -> {e.source} {sym}")
                     lines.append(f"    Source: [{e.source.prod_idx}] {prod}")
                     if isinstance(e.result, PartialItem):
-                        lines.append(f"    Meaning: Extend right by consuming '{e.symbol}' at boundary {e.result.t}")
+                        lines.append(f"    Meaning: Extend right by consuming '{sym}' at boundary {e.result.t}")
                     else:
-                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{e.symbol}' on the right")
+                        lines.append(f"    Meaning: Complete {e.result.symbol} by consuming '{sym}' on the right")
                     lines.append("")
                 else:
                     lines.append(f"    {e}")

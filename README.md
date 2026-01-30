@@ -42,6 +42,10 @@ an agenda. It performs:
 
 Both implementations follow this structure, including the Q-set blocking.
 
+**Nullable (ε) support**: Following Appendix A, nullable nonterminals are seeded into
+`T[i,i]` for all spans, and nullable symbols on either side of a head are handled with
+ε-skip expansions in the h-cover.
+
 ## Grammar Format
 One production per line:
 
@@ -55,8 +59,12 @@ NP -> [det] n
 - If no head is marked, the **first** symbol is the head.
 - Lines can be commented with `#`.
 - **Nonterminals are all symbols that appear on the LHS**. Everything else is a terminal.
-- ε-productions are **not** supported.
-- Start symbol defaults to `S` (the CLIs currently assume this).
+- ε-productions are supported:
+  - Use `A -> ε`, `A -> eps`, `A -> epsilon`, or an empty RHS (`A ->`).
+  - Epsilon productions must be empty (do not mix ε with other symbols).
+- Start symbol defaults to `S` (override with `--start` or `Grammar.from_string(..., start=...)`).
+- If multiple productions rewrite the start symbol, the recognizer introduces a fresh start
+  symbol (e.g., `S_START`) with a single production `S_START -> S`.
 
 ## CLI (Python)
 
@@ -85,6 +93,7 @@ dune exec algorithm7 -- --example "det n cl v det n"
 ```
 -g, --grammar FILE    Load grammar from file
 -e, --example         Use the example grammar from the paper
+--start SYMBOL        Start symbol (default: S)
 --show-grammar        Print the grammar and exit
 --show-hcover         Print the h-cover and exit
 --show-used-rules     Show only the H-cover rules used during recognition
@@ -138,6 +147,7 @@ dune test
 
 ## Known Limitations
 
-- ε-productions are not supported.
-- The CLI assumes start symbol `S` (the library can use any start symbol).
-- The paper assumes a single production for the start symbol; we do not enforce this.
+- Nullable heads are allowed but may be inefficient (the paper recommends avoiding
+  nullable heads for Algorithm 7).
+- Epsilon productions follow the Appendix A adaptation (nullable seeding + ε-skip
+  expansions). Grammars with ε on the head symbol may be slower.

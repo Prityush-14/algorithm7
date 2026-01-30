@@ -22,6 +22,9 @@ class TestProduction:
             Production("S", ("NP", "VP"), head_pos=3)
 
     def test_empty_rhs_validation(self):
+        # Empty RHS requires head_pos=0
+        prod = Production("S", (), head_pos=0)
+        assert prod.rhs == ()
         with pytest.raises(ValueError):
             Production("S", (), head_pos=1)
 
@@ -76,6 +79,24 @@ class TestGrammar:
         g = Grammar.from_string(text, start="s")
         assert "s" in g.nonterminals
         assert "a" in g.terminals
+
+    def test_epsilon_production(self):
+        g = Grammar.from_string("S -> ε")
+        assert len(g.productions) == 1
+        assert g.productions[0].rhs == ()
+        assert g.productions[0].head_pos == 0
+        assert "S" in g.nullable_nonterminals()
+
+    def test_with_single_start(self):
+        text = """
+        S -> [a]
+        S -> [b]
+        """
+        g = Grammar.from_string(text)
+        g2 = g.with_single_start()
+        assert g2.start != g.start
+        assert sum(1 for p in g2.productions if p.lhs == g2.start) == 1
+        assert any(p.lhs == g.start for p in g2.productions)
 
 
 class TestHCover:
@@ -145,6 +166,17 @@ class TestHCover:
         assert len(right_exps) == 1
         assert right_exps[0].symbol == "n"
         assert right_exps[0].result == CompleteItem("NP")
+
+    def test_nullable_left_expansion(self):
+        text = """
+        S -> A [b]
+        A -> ε
+        """
+        g = Grammar.from_string(text)
+        hc = HCover(g)
+        initial = hc.initial_item(0)
+        left_exps = hc.get_left_expansions(initial)
+        assert any(exp.symbol is None for exp in left_exps)
 
 
 class TestRecognizer:
@@ -233,6 +265,20 @@ class TestRecognizer:
         assert rec.recognize(["a", "plus", "a"]) is True
         assert rec.recognize(["a", "plus", "a", "plus", "a"]) is True
         assert rec.recognize(["plus"]) is False
+
+    def test_epsilon_grammar(self):
+        text = """
+        S -> [b] A
+        A -> ε
+        """
+        g = Grammar.from_string(text)
+        rec = Recognizer(grammar=g)
+        assert rec.recognize(["b"]) is True
+        assert rec.recognize([]) is False
+
+        g = Grammar.from_string("S -> ε")
+        rec = Recognizer(grammar=g)
+        assert rec.recognize([]) is True
 
     def test_debug_mode(self, simple_grammar, capsys):
         rec = Recognizer(grammar=simple_grammar, debug=True)

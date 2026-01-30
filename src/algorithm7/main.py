@@ -50,6 +50,12 @@ If no head is marked, the first symbol is used.
         help="Path to grammar file"
     )
     parser.add_argument(
+        "--start",
+        type=str,
+        default="S",
+        help="Start symbol (default: S)"
+    )
+    parser.add_argument(
         "--example", "-e",
         action="store_true",
         help="Use the example grammar from the paper"
@@ -89,10 +95,10 @@ If no head is marked, the first symbol is used.
 
     # Load grammar
     if args.example:
-        grammar = Grammar.from_string(EXAMPLE_GRAMMAR)
+        grammar = Grammar.from_string(EXAMPLE_GRAMMAR, start=args.start)
     elif args.grammar:
         with open(args.grammar) as f:
-            grammar = Grammar.from_string(f.read())
+            grammar = Grammar.from_string(f.read(), start=args.start)
     else:
         print("Error: Must specify --grammar or --example", file=sys.stderr)
         sys.exit(1)
